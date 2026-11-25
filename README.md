@@ -251,11 +251,3 @@ uv run news-intel evaluate --common-only
 uv run news-intel evaluate --fixtures tests/fixtures/relevance_cases.json
 ```
 
-## آزمون و کیفیت کد
-
-```powershell
-uv run pytest
-uv run ruff check .
-uv run ruff format --check .
-uv run alembic check
-```
