@@ -1,0 +1,30 @@
+[
+  {
+    "title": "Iran's central bank publishes updated lending rules",
+    "summary": "The bank said commercial lenders would receive the new rules next month.",
+    "relevance": "direct",
+    "evidence": ["Iran's central bank"],
+    "summary_fa": "بانک مرکزی ایران قواعد تازهٔ وام‌دهی را منتشر کرد."
+  },
+  {
+    "title": "IAEA inspectors report new activity at Fordow",
+    "summary": null,
+    "relevance": "indirect",
+    "evidence": ["Fordow"],
+    "summary_fa": "بازرسان آژانس از فعالیت تازه در فردو گزارش دادند."
+  },
+  {
+    "title": "Portugal opens a youth football camp",
+    "summary": "Iran appears in a list of former opponents in the tournament archive.",
+    "relevance": "unrelated",
+    "evidence": [],
+    "summary_fa": "پرتغال یک اردوی فوتبال جوانان افتتاح کرد."
+  },
+  {
+    "title": "A Gulf official says the agreement may affect a neighboring country",
+    "summary": "The statement gave no details identifying the agreement or affected country.",
+    "relevance": "uncertain",
+    "evidence": [],
+    "summary_fa": "مقامی از خلیج فارس احتمال تأثیر یک توافق بر کشوری همسایه را مطرح کرد."
+  }
+]

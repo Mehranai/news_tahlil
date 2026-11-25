@@ -1,0 +1,13 @@
+/.env
+/config.toml
+/.venv/
+/.uv-cache/
+/.uv-python/
+/.pytest_cache/
+/.ruff_cache/
+__pycache__/
+*.egg-info/
+/data/
+/logs/
+/dist/
+/build/

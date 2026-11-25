@@ -1,0 +1,267 @@
+# Iran News Intelligence System
+
+بک‌اند پایتون برای پایش رسانه‌های خارجی و تشخیص ارتباط مستقیم و غیرمستقیم خبرها با ایران. وضعیت هر فاز و نتیجهٔ آزمون‌ها در [PROJECT_STATUS.md](PROJECT_STATUS.md) ثبت می‌شود.
+
+<div dir="rtl" align="right">
+
+## راهنمای اجرای سریع
+
+فرمان‌ها را از ریشهٔ پروژه اجرا کن. مدل و منابع در `config.toml` و اطلاعات تلگرام در `.env` تنظیم می‌شوند.
+
+**۱. نصب اولیه و آماده‌سازی دیتابیس**
+
+<div dir="ltr" align="left">
+
+```sh
+uv sync --locked
+uv run alembic upgrade head
+```
+
+</div>
+
+**۲. روشن کردن مدل در ترمینال اول**
+
+<div dir="ltr" align="left">
+
+```sh
+uv run news-intel serve-model
+```
+
+</div>
+
+**۳. روشن کردن زمان‌بند در ترمینال دوم**
+
+<div dir="ltr" align="left">
+
+```sh
+uv run news-intel schedule --limit 20
+```
+
+</div>
+
+مدل و زمان‌بند را روشن نگه دار. `--limit 20` سقف تحلیل و اعلان در هر نوبت است. ساعت‌ها را در `schedule.times` تغییر بده و زمان‌بند را دوباره راه بینداز.
+
+**۴. بررسی اجراها و خبرهای مرتبط**
+
+<div dir="ltr" align="left">
+
+```sh
+uv run news-intel runs --limit 5
+uv run news-intel review --related
+```
+
+</div>
+
+`scheduler_running: true` یعنی زمان‌بند روشن است. برای یک اجرای فوری، `uv run news-intel run --limit 1` می‌تواند حداکثر یک اعلان واقعی بفرستد.
+
+</div>
+
+## معماری و مسیر داده
+
+۱. زمان‌بند در منطقهٔ زمانی `Asia/Tehran` واکشی را شروع می‌کند. هر رسانه آداپتور مستقل دارد و از مسیر مجاز RSS یا API استفاده می‌کند. همهٔ خبرهای دریافتی برای پردازش ثبت می‌شوند.
+
+۲. خط لوله عنوان، خلاصه و متن قابل دریافت را به قالب یکسان تبدیل می‌کند. URL استانداردشده هویت مقاله را مشخص می‌کند و هش محتوا تغییر متن را نشان می‌دهد. شناسهٔ مقاله در `articles` و نسخه‌های محتوای آن در `article_revisions` ثبت می‌شوند. این طرح امکان بازبینی شواهد و مقایسهٔ مدل‌ها روی همان متن را فراهم می‌کند.
+
+۳. طبقه‌بند از طریق یک رابط مشترک روی نسخهٔ مقاله اجرا می‌شود. پیاده‌سازی نخست از LLM API و JSON Schema استفاده می‌کند. در آینده می‌توان مدل محلی یا طبقه‌بند ترکیبی را با همان ورودی و خروجی اضافه کرد. نتیجه، نام ارائه‌دهنده و مدل، نسخهٔ پرامپت و مصرف توکن در صورت دسترسی ثبت می‌شوند.
+
+۴. مسیر ارسال از تحلیل جداست. یک رکورد اعلان برای هر مقاله و کانال نگه می‌داریم تا تلاش مجدد یا تحلیل دوبارهٔ همان مقاله باعث ارسال عادی دوباره نشود. بازخورد انسانی کنار نسخهٔ مقاله و تحلیل ثبت می‌شود تا بعداً دقت مدل‌ها را بسنجیم.
+
+## فناوری‌ها
+
+- **Python 3.12 و uv** برای محیط و وابستگی‌ها. [مستندات مدیریت پروژه با uv](https://docs.astral.sh/uv/guides/projects/)
+- **Pydantic و Pydantic Settings** برای اعتبارسنجی TOML و خواندن متغیرهای محیطی و فایل `.env`. منطقهٔ زمانی با `zoneinfo` و بستهٔ `tzdata` روی ویندوز هم قابل استفاده است. [مستندات تنظیمات](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) · [مستندات zoneinfo](https://docs.python.org/3.12/library/zoneinfo.html)
+- **SQLite، SQLAlchemy 2.0 و Alembic** برای ذخیره‌سازی و migration نسخه‌دار. تاریخ‌ها را به UTC ذخیره می‌کنیم و کلیدهای خارجی SQLite را فعال می‌کنیم. [مستندات SQLite در SQLAlchemy](https://docs.sqlalchemy.org/en/20/dialects/sqlite.html#foreign-key-support) · [مستندات Alembic](https://alembic.sqlalchemy.org/en/latest/tutorial.html)
+- **pytest و Ruff** برای آزمون، بررسی استاتیک و قالب‌بندی. لاگ‌ها به شکل JSON روی stderr نوشته می‌شوند.
+
+## مسیر توسعه
+
+| فاز | خروجی |
+| --- | --- |
+| ۱. زیرساخت | تنظیمات، مدل‌های داده، migration، لاگ و فرمان وضعیت |
+| ۲. جمع‌آوری | آداپتور رسانه‌ها، دریافت و استخراج متن، ثبت نسخه و حذف موارد تکراری با فرمان `collect` |
+| ۳. هوش مصنوعی | رابط طبقه‌بندی، LLM API، پرامپت نسخه‌دار و اعتبارسنجی شواهد و JSON با فرمان `analyze` |
+| ۴. اعلان | ارسال تلگرام با فرمان `notify`، وضعیت پایدار ارسال و تلاش مجدد |
+| ۵. اجرای خودکار | زمان‌بند، فرمان‌های خط لوله و جلوگیری از اجرای هم‌زمان |
+| ۶. ارزیابی | آزمون انتها‌به‌انتها، دادهٔ مصنوعی جدا و سنجه‌های دقت از جمله Recall اخبار غیرمستقیم |
+| ۷. توسعهٔ آینده | Embedding، Entity Linking، RAG و طبقه‌بندی ترکیبی |
+
+## تنظیمات و واکشی
+
+SQLite در `data/iran_news.db` ساخته می‌شود. فرمان `status` ساعت‌ها، رسانه‌های تعریف‌شده، نسخهٔ migration و تعداد رکوردهای هر جدول را نشان می‌دهد.
+
+برای اجرای دستی یک یا چند منبع مشخص، از گزینهٔ `--source` استفاده کن.
+
+```powershell
+uv run news-intel collect --source bbc --source dw
+```
+
+فرمان `collect` برای هر منبع تعداد خبرهای دریافتی، مقاله‌ها و نسخه‌های جدید و موارد تکراری را چاپ می‌کند. خرابی یک منبع در `fetch_logs` ثبت می‌شود و جمع‌آوری از بقیه ادامه پیدا می‌کند. اگر دست‌کم یک منبع ناموفق باشد، فرمان بعد از گزارش همهٔ منابع با کد خروج ۱ پایان می‌یابد.
+
+تنظیمات پیش‌فرض در [defaults.toml](app/config/defaults.toml) قرار دارند. برای تغییر زمان‌ها، یک `config.toml` در ریشه بساز و بخش زیر را در آن بگذار. منطقهٔ زمانی یا رسانه‌هایی که در فایل محلی نیامده‌اند از تنظیمات پیش‌فرض خوانده می‌شوند.
+
+```toml
+[schedule]
+times = ["08:00", "11:00", "14:00", "17:00", "20:00"]
+```
+
+با `uv run news-intel --config custom.toml status` می‌توانی فایل تنظیمات دیگری را بررسی کنی. برای تغییر مسیر پایگاه داده یا سطح لاگ، [.env.example](.env.example) را به `.env` کپی کن. تنظیمات محیطی بر `.env` اولویت دارند. مسیر تأییدشدهٔ این نسخه SQLite است. اجرای PostgreSQL به نصب درایور و آزمون migration در آن محیط نیاز دارد.
+
+زمان انتظار شبکه، سقف تعداد تلاش و حداقل فاصلهٔ درخواست‌ها برای هر میزبان در `config.toml` قابل تنظیم‌اند. پاسخ‌های موقت HTTP و timeout دوباره امتحان می‌شوند و `Retry-After` ناشر رعایت می‌شود.
+
+```toml
+[collection]
+timeout_seconds = 15
+attempts = 3
+min_interval_seconds = 1
+```
+
+### فیدها و API
+
+| رسانه | نشانی | قالب فید |
+| --- | --- | --- |
+| BBC News | [World RSS](https://feeds.bbci.co.uk/news/world/rss.xml) | RSS 2.0 |
+| The Guardian | [World RSS](https://www.theguardian.com/world/rss) | RSS 2.0 |
+| Al Jazeera English | [English RSS](https://www.aljazeera.com/xml/rss/all.xml) | RSS 2.0 |
+| Deutsche Welle | [English RSS](https://rss.dw.com/rdf/rss-en-all) | RSS 1.0 / RDF |
+
+هر چهار نشانی در بررسی مستقیم HTTP با XML معتبر پاسخ دادند. در سه فید اول، تاریخ در `pubDate` است. فید DW از فیلدهای نام‌فضادار `date`، `language` و `contentID` استفاده می‌کند.
+
+Guardian فعلاً در تنظیمات پیش‌فرض غیرفعال است. API رسمی آن از جست‌وجوی صفحه‌بندی‌شده و دریافت بدنه با `show-fields=body` پشتیبانی می‌کند. برای استفاده در این پروژه، باید مجوز مناسب برای جمع‌آوری، تحلیل ماشینی و نگه‌داری داده وجود داشته باشد. کلید API دسترسی به سرویس را فراهم می‌کند و مجوز تحلیل ماشینی را جداگانه باید بررسی کرد. [مستندات API](https://open-platform.theguardian.com/documentation/) · [Content API Explorer](https://explorer.capi.gutools.co.uk/) · [شرایط Open Platform](https://www.theguardian.com/open-platform/terms-and-conditions) · [شرایط وب‌سایت و RSS](https://www.theguardian.com/help/terms-of-service)
+
+### استخراج متن و تشخیص تکرار
+
+حالت پیش‌فرض برای منابع فعال، دریافت عنوان و خلاصه از RSS است. برای رسانه‌ای که دریافت و نگه‌داری متن آن برای کاربردت مجاز است، [defaults.toml](app/config/defaults.toml) را به `config.toml` کپی کن و در بخش همان رسانه `fetch_full_text = true` بگذار. تعریف `[[sources]]` در فایل محلی جای فهرست پیش‌فرض را می‌گیرد.
+
+مسیر استخراج HTML، قواعد `robots.txt` و نشانه‌های محدودیت دسترسی را بررسی می‌کند و پس از دریافت صفحه، متن اصلی را با Trafilatura جدا می‌کند. وقتی خلاصه در دسترس باشد، حالت جایگزین `partial` است. اگر فقط عنوان موجود باشد، رکورد با وضعیت `failed` ثبت می‌شود. [مستندات Trafilatura](https://trafilatura.readthedocs.io/en/latest/usage-python.html) · [پروتکل robots.txt](https://www.rfc-editor.org/rfc/rfc9309.html)
+
+برای استفادهٔ مجاز از Guardian، `enabled = true` و `GUARDIAN_API_KEY` را در تنظیمات مربوطه قرار بده. در صورت وجود کلید، آداپتور ابتدا API رسمی را می‌خواند. برای دریافت بدنه از همان API، `fetch_full_text = true` را فعال کن. اگر دسترسی مجاز فقط به RSS داری، تنظیم منبع را روی فید نگه دار و کلید وارد نکن.
+
+پارامترهای شناخته‌شدهٔ رهگیری از URL استاندارد حذف می‌شوند و لینک اولیهٔ ناشر حفظ می‌شود. بازنشر با لینک تازه در همان رسانه با لینک canonical یا محتوای دقیقِ دارای شواهد کافی شناسایی می‌شود. تغییر عنوان یا متن، نسخهٔ تازه می‌سازد. در حالت RSS، خلاصه در هش محتوا به کار می‌رود. خبرهای رسانه‌های مختلف مستقل ذخیره می‌شوند.
+
+## تحلیل ارتباط خبر با ایران
+
+برای تنظیم تحلیل، اگر `config.toml` نداری، [defaults.toml](app/config/defaults.toml) را به این نام در ریشهٔ پروژه کپی کن. در بخش `[[sources]]` هر رسانه‌ای که مجوز پردازش محتوایش در مدل انتخابی را داری، `allow_classification = true` را تنظیم کن. فقط نسخه‌های ذخیره‌شدهٔ منابع فعال با این گزینه برای تحلیل انتخاب می‌شوند.
+
+### اجرای مدل محلی روی ویندوز و لینوکس
+
+فایل GGUF مدل **Qwen3.5 9B Q5_K_S** از پوشهٔ `data/local-ollama/models` با llama.cpp اجرا می‌شود. `serve-model` نام مدل و نشانی را از `[classification]` در `config.toml` می‌خواند. نشانی فعلی `http://127.0.0.1:18080/v1` است. روی لینوکس، نسخهٔ متناسب با معماری سرور از `llama-server` را در `PATH` قرار بده یا مسیر آن را با `--server` بده. در ویندوز، باینری موجود در `data/local-llama/runtime` هم شناسایی می‌شود. [نسخهٔ llama.cpp](https://github.com/ggml-org/llama.cpp/releases/tag/b12359)
+
+```sh
+uv run news-intel serve-model
+```
+
+این فرمان سرویس مدل را در همان ترمینال نگه می‌دارد. پس از آماده‌شدن مدل، فرمان `schedule` را در یک ترمینال دیگر اجرا کن. در لینوکس، حالت پیش‌فرض CPU است. برای اجرای صریح روی CPU از `--gpu-layers 0` استفاده کن. روی سرور دارای GPU سازگار، `--gpu-layers` و در صورت نیاز `--device` را مطابق باینری و سخت‌افزارت تنظیم کن. اگر فایل GGUF را در مسیری دیگر قرار دادی، مسیر آن را با `--model-file` وارد کن. [گزینه‌های llama-server](https://github.com/ggml-org/llama.cpp/blob/b12359/tools/server/README.md)
+
+### ارائه‌دهنده‌های دیگر
+
+این نمونه برای سرویس دارای Chat Completions و پشتیبانی از Structured Outputs است. آدرس پایه و نام مدل را مطابق ارائه‌دهندهٔ خودت بگذار و کلید سرویس را با نام `LLM_API_KEY` در `.env` قرار بده. [مستندات Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create) · [مدل GPT-4.1 mini](https://developers.openai.com/api/docs/models/gpt-4.1-mini)
+
+```toml
+[classification]
+provider = "openai"
+protocol = "openai_compatible"
+base_url = "https://api.openai.com/v1"
+model = "gpt-4.1-mini"
+```
+
+برای Ollama محلی، از تنظیمات زیر با مدلی که روی سیستم بارگذاری شده استفاده کن. این مسیر به کلید API نیاز ندارد. [مستندات خروجی ساختاریافتهٔ Ollama](https://docs.ollama.com/capabilities/structured-outputs)
+
+```toml
+[classification]
+provider = "ollama"
+protocol = "ollama"
+base_url = "http://127.0.0.1:11434"
+model = "qwen3:8b"
+```
+
+```powershell
+uv run alembic upgrade head
+uv run news-intel analyze --limit 5
+uv run news-intel analyze --retry-failed --limit 5
+```
+
+برای تحلیل همهٔ موارد واجد شرایط، گزینهٔ `--limit` را بردار. اجرای دوباره با همان تنظیمات، نسخه‌هایی را که نتیجهٔ معتبر دارند کنار می‌گذارد. تغییر مدل، نسخهٔ اختیاری `model_version` یا پرامپت، اجرای مستقل می‌سازد. گزینهٔ `--retry-failed` تلاش‌های ناموفق را هم در صف می‌آورد. خطاهای سراسری مانند محدودیت نرخ و احراز هویت اجرای فعلی را متوقف می‌کنند.
+
+پرامپت پایه در [iran_relevance_v1.txt](app/intelligence/prompts/iran_relevance_v1.txt) قرار دارد. با `prompt_path` می‌توانی راهنمای مورد اعتماد پروژه را از فایلی با مسیر نسبی به TOML به پرامپت پایه اضافه کنی. نسخهٔ ثبت‌شده از محتوای پرامپت به دست می‌آید. سقف متن و توکن خروجی نیز با `max_body_chars` و `max_output_tokens` قابل تنظیم‌اند.
+
+مدل برای هر نسخه یک برچسب `direct`، `indirect`، `unrelated` یا `uncertain`، دلیل، شواهد و خلاصهٔ فارسی برمی‌گرداند. برای نمونه، «IAEA inspectors report new activity at Fordow» می‌تواند به‌دلیل اشاره به فردو غیرمستقیم تشخیص داده شود. متن خبر در پیام داده قرار می‌گیرد و برنامه برای مدل ابزاری تعریف نمی‌کند. خروجی با JSON Schema و Pydantic بررسی می‌شود و شواهد باید در بخش‌های ارسال‌شده از خبر پیدا شوند. ارتباط مثبتِ بدون شاهد معتبر به `uncertain` با نیاز به بازبینی تبدیل می‌شود. امتیاز `confidence` برآورد مدل است.
+
+نتیجه در `classifications` و وضعیت هر تلاش در `analysis_jobs` ذخیره می‌شود. نمونه‌های مصنوعی آزمون در [tests/fixtures](tests/fixtures) قرار دارند.
+
+## اعلان تلگرام
+
+برای ساخت بات، در گفت‌وگو با BotFather دستور `/newbot` را اجرا کن. توکن را با نام `TELEGRAM_BOT_TOKEN` در فایل `.env` قرار بده. برای چت خصوصی، ابتدا در خود بات `/start` را بزن. شناسهٔ مقصد از `message.chat.id` در پاسخ `getUpdates` به دست می‌آید و در `.env` با نام `TELEGRAM_CHAT_ID` قرار می‌گیرد. برای کانال، می‌توان نام عمومی با قالب `@channelname` را وارد کرد و به بات اجازهٔ ارسال پست داد. [راهنمای ساخت بات](https://core.telegram.org/bots/tutorial) · [getUpdates](https://core.telegram.org/bots/api#getupdates) · [sendMessage](https://core.telegram.org/bots/api#sendmessage)
+
+```powershell
+uv run alembic upgrade head
+uv run news-intel notify --limit 1
+```
+
+`notify` تازه‌ترین نتیجه برای نسخهٔ فعلی هر خبر را بررسی می‌کند. برای خبر مستقیم یا غیرمستقیمِ منابع فعال و مجاز، پیام فارسی با خلاصه، دلیل ارتباط، دسته‌بندی، تاریخ به وقت تنظیم‌شده و لینک مقاله می‌فرستد. با `send_uncertain = true` خبرهای نامشخص هم با عنوان «نیازمند بررسی» وارد صف می‌شوند.
+
+```toml
+[notifications]
+send_uncertain = false
+timeout_seconds = 15
+```
+
+هر مقاله یک رکورد اعلان تلگرام دارد. شناسهٔ پیام و زمان ارسال بعد از تأیید تلگرام ثبت می‌شوند. تلاش‌های ناموفقِ قابل بازیابی در اجراهای بعدی، با رعایت زمان اعلام‌شده از تلگرام، دوباره امتحان می‌شوند. اگر خطای مقصد یا مجوز را برطرف کردی، `uv run news-intel notify --retry-failed` را اجرا کن.
+
+اگر پاسخ ارسال گم شود، ممکن است پیام به مقصد رسیده باشد. این موارد با وضعیت `unknown` و شناسهٔ مقاله در گزارش `unknown_articles` دیده می‌شوند. پس از بررسی تاریخچهٔ چت، برای تلاش دوبارهٔ همان مقاله از `uv run news-intel notify --retry-unknown ARTICLE_ID` استفاده کن.
+
+## فرمان‌های خط لوله
+
+هر ساعت یکتا در `schedule.times` یک نوبت روزانه است. `status` فهرست کامل ساعت‌ها و `schedule --preview` پنج نوبت بعدی را نشان می‌دهد. روی لینوکس، مدل و زمان‌بند را می‌توان با دو سرویس `systemd` بالا آورد.
+
+برای اجرای کامل به بخش `[classification]`، یک منبع فعال با `allow_classification = true` برای استفادهٔ مجاز، و تنظیمات تلگرام در `.env` نیاز است. پیش‌نمایش زمان‌ها بدون این پیش‌نیازها کار می‌کند.
+
+اگر هنگام `alembic upgrade head` خطای `database is locked` دیدی و فایل SQLite در DB Browser باز است، در آن برنامه **Close Database** را بزن و migration را دوباره اجرا کن.
+
+| فرمان | کاربرد |
+| --- | --- |
+| `collect --metadata-only` | ذخیرهٔ تیتر و چکیدهٔ RSS یا API، بدون درخواست متن کامل |
+| `extract --limit 20` | تلاش دوباره برای متن کامل نسخه‌های ناقص منابع مجاز به استخراج |
+| `analyze` و `notify` | اجرای مستقل تحلیل و اعلان |
+| `run --limit 20` | یک اجرای کامل با سقف ۲۰ تحلیل و ۲۰ اعلان در این نوبت |
+| `retry --limit 20` | تلاش دوباره برای استخراج ناقص، تحلیل‌های شکست‌خورده و خطاهای قطعی ارسال |
+| `status` | نمایش زمان‌بندی، منابع و وضعیت پایگاه داده |
+| `runs --limit 10` | نمایش وضعیت فعال زمان‌بند و ده اجرای اخیر |
+| `review --related` | نمایش خبرهایی که مدل مستقیم یا غیرمستقیم به ایران مرتبط دانسته است |
+
+در `runs`، `pipeline_running` وضعیت پردازش فعلی را نشان می‌دهد. `trigger: scheduled` برای نوبت خودکار و `trigger: manual` برای اجرای دستی است. جدول `pipeline_runs` زمان شروع و پایان، نتیجهٔ تحلیل و تعداد اعلان‌های ارسال‌شده را ثبت می‌کند.
+
+هر فرمان خط لوله روی همان پایگاه داده قفل می‌گیرد. اگر نوبت دیگری در حال اجرا باشد، فرمان تازه با کد ۳ خارج می‌شود. اگر زمان‌بند در نوبت بعدی هنوز مشغول باشد، همان نوبت رد می‌شود.
+
+## بازبینی انسانی و ارزیابی مدل
+
+`review` نسخه‌های ذخیره‌شده را همراه با شناسه، نتیجهٔ مدل و آخرین برچسب انسانی نشان می‌دهد. با `--revision` متن ذخیره‌شده و شاهد مدل را هم می‌بینی. `feedback` هر اصلاح را به‌عنوان یک رکورد تازه ذخیره می‌کند. آخرین برچسب انسانی در ارزیابی و در انتخاب اعلان‌های ارسال‌نشده برای همان نسخه به‌کار می‌رود. پیش‌بینی اولیهٔ مدل برای محاسبهٔ خطا حفظ می‌شود.
+
+```powershell
+uv run news-intel review --needs-review
+uv run news-intel review --revision 42
+uv run news-intel feedback 42 indirect --note "اشارهٔ ضمنی به فردو"
+uv run news-intel evaluate
+uv run news-intel evaluate --common-only
+```
+
+`evaluate` نتیجه‌ها را بر اساس ارائه‌دهنده، مدل، نسخه، پرامپت و تنظیمات مدل جدا می‌کند و تعداد نمونه‌های برچسب‌خورده، تعداد پیش‌بینی‌ها و نمونه‌خطاها را می‌دهد. برای مقایسهٔ مدل‌ها روی نسخه‌های مشترک، همان خبرها را با تنظیمات مدل‌های موردنظر تحلیل کن و بعد `evaluate --common-only` را اجرا کن.
+
+- `accuracy` و `confusion_matrix` هر چهار برچسب را در نظر می‌گیرند. سطر ماتریس برچسب انسانی و ستون آن پیش‌بینی مدل است.
+- `precision`، `recall`، `f1` و نرخ‌های خطای مثبت و منفی از تصمیم دودویی ارتباط محاسبه می‌شوند. `direct` و `indirect` مثبت‌اند.
+- `macro_f1` میانگین F1 برچسب‌هایی است که دست‌کم یک رخداد در برچسب انسانی یا پیش‌بینی دارند. مقدار `null` یعنی دادهٔ لازم برای محاسبهٔ سنجه وجود نداشته است.
+- `indirect_relevance_recall` سهم نمونه‌های غیرمستقیمی است که با برچسب `indirect` پیدا شدند. `indirect_detection_recall` سهم همان نمونه‌هاست که مدل آن‌ها را مرتبط تشخیص داده است.
+
+نمونه‌های مصنوعی در `tests/fixtures/relevance_cases.json` جدا از SQLite نگهداری می‌شوند. فرمان زیر مدل پیکربندی‌شده را روی این نمونه‌ها اجرا می‌کند و تعداد پاسخ‌های معتبر، خطاهای اجرا و نتیجهٔ هر نمونه را گزارش می‌دهد. سنجه‌ها بر اساس پاسخ‌های معتبر محاسبه می‌شوند.
+
+```powershell
+uv run news-intel evaluate --fixtures tests/fixtures/relevance_cases.json
+```
+
+## آزمون و کیفیت کد
+
+```powershell
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run alembic check
+```

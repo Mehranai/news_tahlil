@@ -1,0 +1,25 @@
+[schedule]
+timezone = "Asia/Tehran"
+times = ["08:00", "11:00", "14:00", "17:00", "20:00"]
+
+[[sources]]
+slug = "bbc"
+name = "BBC News"
+rss_url = "https://feeds.bbci.co.uk/news/world/rss.xml"
+
+[[sources]]
+slug = "guardian"
+name = "The Guardian"
+rss_url = "https://www.theguardian.com/world/rss"
+api_search_url = "https://content.guardianapis.com/search"
+enabled = false
+
+[[sources]]
+slug = "aljazeera"
+name = "Al Jazeera English"
+rss_url = "https://www.aljazeera.com/xml/rss/all.xml"
+
+[[sources]]
+slug = "dw"
+name = "Deutsche Welle"
+rss_url = "https://rss.dw.com/rdf/rss-en-all"
