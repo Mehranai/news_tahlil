@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, time
 from pathlib import Path
 from xml.sax.saxutils import escape
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -24,7 +25,7 @@ from app.config.settings import (
 from app.extractors.article import ArticleExtractor
 from app.pipelines.collection import CollectionPipeline
 from app.preprocessing import normalize_url
-from app.scheduler import upcoming_runs
+from app.scheduler import publication_window, upcoming_runs
 from app.sources.base import Candidate
 from app.sources.guardian import GuardianSource
 from app.sources.registry import build_source
@@ -407,6 +408,14 @@ def test_schedule_uses_each_configured_slot_and_wraps_to_the_next_day() -> None:
         "2026-11-25T11:00:00+03:30",
         "2026-11-25T17:00:00+03:30",
     ]
+
+
+def test_first_window_starts_at_the_last_scheduled_time_of_the_previous_day() -> None:
+    settings = ScheduleSettings(timezone="Asia/Tehran", times=[time(8), time(21, 30)])
+    window = publication_window(settings, datetime(2026, 11, 25, 4, 30, tzinfo=UTC))
+    zone = ZoneInfo(settings.timezone)
+    assert window.start == datetime(2026, 11, 24, 21, 30, tzinfo=zone)
+    assert window.end == datetime(2026, 11, 25, 8, tzinfo=zone)
 
 
 def test_cli_extracts_saved_article_and_refuses_overlap(

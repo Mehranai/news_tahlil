@@ -27,6 +27,7 @@ from app.intelligence.contracts import ClassificationError, Relevance
 from app.local_model import DEFAULT_MODEL, LocalModelError, serve_model
 from app.logging_config import configure_logging
 from app.pipelines.workflow import ConfigurationError, Workflow
+from app.publication_window import PublicationWindow
 from app.scheduler import serve, upcoming_runs
 from app.storage.database import create_database_engine
 from app.storage.evaluation import EvaluationStore
@@ -256,7 +257,9 @@ def _serve_schedule(
                 "Scheduler started",
                 extra={"fields": {"next_runs": upcoming_runs(project.schedule)}},
             )
-            serve(project.schedule, lambda: _run_stages(runtime, project, args))
+            serve(
+                project.schedule, lambda window: _run_stages(runtime, project, args, window=window)
+            )
     except (SQLAlchemyError, sqlite3.Error, OSError, ImportError) as exc:
         logger.error(
             "Scheduler could not start", extra={"fields": {"error_type": type(exc).__name__}}
@@ -377,6 +380,7 @@ def _run_stages(
     args: argparse.Namespace,
     *,
     check_only: bool = False,
+    window: PublicationWindow | None = None,
 ) -> int:
     command = "run" if args.command == "schedule" else args.command
     requested = getattr(args, "source", None)
@@ -393,6 +397,7 @@ def _run_stages(
     history = None
     run_id = None
     report = None
+    initial_report = {"window": window.as_dict()} if window is not None else None
     code = 1
     error = None
     try:
@@ -410,7 +415,10 @@ def _run_stages(
                 return 1
             if not check_only:
                 history = RunHistory(sessions)
-                run_id = history.start("scheduled" if args.command == "schedule" else "manual")
+                run_id = history.start(
+                    "scheduled" if args.command == "schedule" else "manual",
+                    report=initial_report,
+                )
         with httpx.Client() as client, pipeline_lock(engine) as acquired:
             if not acquired and not check_only:
                 logger.warning("Another pipeline run holds the database lock")
@@ -425,6 +433,7 @@ def _run_stages(
                     retry_failed=getattr(args, "retry_failed", False),
                     retry_unknown=getattr(args, "retry_unknown", None),
                     check_only=check_only,
+                    window=window,
                 )
     except ConfigurationError as exc:
         logger.error(str(exc))
@@ -439,7 +448,9 @@ def _run_stages(
     finally:
         try:
             if history is not None and run_id is not None:
-                history.finish(run_id, code, report if isinstance(report, dict) else None, error)
+                history.finish(
+                    run_id, code, report if isinstance(report, dict) else initial_report, error
+                )
         except (SQLAlchemyError, OSError) as exc:
             logger.error(
                 "Could not save run outcome", extra={"fields": {"error_type": type(exc).__name__}}

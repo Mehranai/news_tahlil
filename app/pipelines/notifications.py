@@ -2,13 +2,14 @@
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from app.notifications.message import render_message
 from app.notifications.telegram import DeliveryError
+from app.publication_window import PublicationWindow
 from app.storage.notifications import NotificationStore
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,15 @@ class NotificationReport:
     deferred_until: str | None = None
     unknown_articles: list[int] = field(default_factory=list)
 
+    def include(self, report: "NotificationReport") -> None:
+        self.selected += report.selected
+        self.sent += report.sent
+        self.failed += report.failed
+        self.skipped += report.skipped
+        self.halted = report.halted or self.halted
+        self.deferred_until = report.deferred_until
+        self.unknown_articles = report.unknown_articles
+
 
 class NotificationPipeline:
     def __init__(
@@ -42,6 +52,7 @@ class NotificationPipeline:
         self.sender = sender
         self.timezone = timezone
         self.sleep = sleep
+        self._next_send = 0.0
 
     def notify(
         self,
@@ -51,6 +62,9 @@ class NotificationPipeline:
         retry_failed: bool = False,
         retry_unknown: int | None = None,
         limit: int | None = None,
+        revision_id: int | None = None,
+        exclude_revisions: Collection[int] = (),
+        window: PublicationWindow | None = None,
     ) -> NotificationReport:
         self.store.expire_claims()
         report = NotificationReport()
@@ -65,9 +79,11 @@ class NotificationPipeline:
             retry_failed=retry_failed,
             retry_unknown=retry_unknown,
             limit=limit,
+            revision_id=revision_id,
+            exclude_revisions=exclude_revisions,
+            window=window,
         )
         report.selected = len(candidates)
-        next_send = 0.0
         for alert in candidates:
             claim = self.store.claim(
                 alert, retry_failed=retry_failed, retry_unknown=retry_unknown is not None
@@ -83,9 +99,9 @@ class NotificationPipeline:
                 )
                 report.failed += 1
                 continue
-            if (wait := next_send - time.monotonic()) > 0:
+            if (wait := self._next_send - time.monotonic()) > 0:
                 self.sleep(wait)
-            next_send = time.monotonic() + 1
+            self._next_send = time.monotonic() + 1
             try:
                 message_id = self.sender.send(message)
             except DeliveryError as exc:

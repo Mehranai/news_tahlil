@@ -1,9 +1,11 @@
 """Compose the collection, analysis, and notification stages."""
 
+import logging
 from dataclasses import asdict
 from zoneinfo import ZoneInfo
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.collectors.http import HttpFetcher
@@ -13,12 +15,15 @@ from app.intelligence.classifier import build_classifier
 from app.notifications.telegram import TelegramSender
 from app.pipelines.analysis import AnalysisPipeline
 from app.pipelines.collection import CollectionPipeline
-from app.pipelines.notifications import NotificationPipeline
+from app.pipelines.notifications import NotificationPipeline, NotificationReport
+from app.publication_window import PublicationWindow
 from app.sources.registry import build_source
 from app.storage.analysis import AnalysisStore
 from app.storage.collection import CollectionStore
 from app.storage.models import FetchStatus
 from app.storage.notifications import NotificationStore
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigurationError(Exception):
@@ -107,6 +112,7 @@ class Workflow:
         retry_failed: bool = False,
         retry_unknown: int | None = None,
         check_only: bool = False,
+        window: PublicationWindow | None = None,
     ) -> tuple[dict | list, int]:
         if command in {"collect", "extract"}:
             return self.collect(
@@ -119,7 +125,7 @@ class Workflow:
         if check_only:
             return {}, 0
 
-        reports = {}
+        reports: dict = {"window": window.as_dict()} if window is not None else {}
         code = 0
         if command in {"run", "retry"}:
             stage = "extract" if command == "retry" else "collect"
@@ -127,21 +133,54 @@ class Workflow:
                 sources, extract_only=stage == "extract", limit=limit
             )
         retry_failed = retry_failed or command == "retry"
+        notified = NotificationReport()
+        selected_revisions: set[int] = set()
+
+        def send(revision_id: int | None = None) -> None:
+            if notifier is None or notified.halted:
+                return
+            remaining = None if limit is None else limit - notified.selected
+            if remaining == 0:
+                return
+            try:
+                result = notifier.notify(
+                    allowed,
+                    limit=1 if revision_id is not None else remaining,
+                    send_uncertain=self.project.notifications.send_uncertain,
+                    retry_failed=retry_failed,
+                    retry_unknown=retry_unknown,
+                    revision_id=revision_id,
+                    exclude_revisions=selected_revisions if revision_id is None else (),
+                    window=window,
+                )
+            except SQLAlchemyError as exc:
+                notified.halted = "notification_store_error"
+                logger.error(
+                    "Notification storage operation failed",
+                    extra={"fields": {"error_type": type(exc).__name__}},
+                )
+                return
+            notified.include(result)
+            if revision_id is not None and result.selected:
+                selected_revisions.add(revision_id)
+
         if analyzer is not None:
-            analyzed = analyzer.analyze(allowed, limit=limit, retry_failed=retry_failed)
+            analyzed = analyzer.analyze(
+                allowed,
+                limit=limit,
+                retry_failed=retry_failed,
+                after_saved=send if notifier is not None else None,
+                window=window,
+            )
             reports["analyze"] = asdict(analyzed)
             code = max(code, int(bool(analyzed.failed or analyzed.halted)))
         if notifier is not None:
-            notified = notifier.notify(
-                allowed,
-                limit=limit,
-                send_uncertain=self.project.notifications.send_uncertain,
-                retry_failed=retry_failed,
-                retry_unknown=retry_unknown,
-            )
+            send()
             reports["notify"] = asdict(notified)
             code = max(code, int(bool(notified.failed or notified.halted)))
-            if retry_unknown is not None and not notified.selected and not notified.deferred_until:
+            if retry_unknown is not None and not (
+                notified.selected or notified.deferred_until or notified.halted
+            ):
                 code = 2
 
         return reports.get(command, reports), code

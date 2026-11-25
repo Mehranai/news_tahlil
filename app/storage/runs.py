@@ -13,9 +13,9 @@ class RunHistory:
     def __init__(self, sessions: sessionmaker[Session]) -> None:
         self.sessions = sessions
 
-    def start(self, trigger: str) -> int:
+    def start(self, trigger: str, *, report: dict | None = None) -> int:
         with self.sessions.begin() as session:
-            row = PipelineRun(trigger=trigger)
+            row = PipelineRun(trigger=trigger, report=report)
             session.add(row)
             session.flush()
             return row.id

@@ -189,6 +189,25 @@ def test_only_the_latest_revision_and_result_can_trigger_an_alert(database: Engi
     )
 
 
+def test_new_revision_can_be_selected_ahead_of_existing_alerts(database: Engine) -> None:
+    earlier = seed(database, "earlier", "direct")
+    current = seed(database, "current", "indirect")
+    with Session(database) as session:
+        revision_id = session.scalar(
+            select(ArticleRevision.id).where(ArticleRevision.article_id == current)
+        )
+    store = NotificationStore(sessionmaker(database))
+    options = dict(send_uncertain=False, retry_failed=False, retry_unknown=None, limit=1)
+    assert store.candidates(["bbc"], **options)[0].article_id == earlier
+    assert store.candidates(["bbc"], revision_id=revision_id, **options)[0].article_id == current
+    assert (
+        store.candidates(
+            ["bbc"], revision_id=revision_id, exclude_revisions={revision_id}, **options
+        )
+        == []
+    )
+
+
 def test_rate_limit_persists_and_resumes_only_after_wait(database: Engine) -> None:
     first = seed(database, "first", "direct")
     seed(database, "second", "indirect")

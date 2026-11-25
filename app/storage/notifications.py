@@ -1,5 +1,6 @@
 """Persist notification claims, confirmations, and retry times."""
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from secrets import token_hex
@@ -12,6 +13,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.intelligence.contracts import Relevance
 from app.notifications.message import Alert
+from app.publication_window import PublicationWindow
 from app.storage.evaluation import latest_classification_id, latest_feedback_id
 from app.storage.models import (
     Article,
@@ -79,6 +81,9 @@ class NotificationStore:
         retry_failed: bool,
         retry_unknown: int | None,
         limit: int | None,
+        revision_id: int | None = None,
+        exclude_revisions: Collection[int] = (),
+        window: PublicationWindow | None = None,
     ) -> list[Alert]:
         revision = aliased(ArticleRevision)
         latest_revision = (
@@ -127,6 +132,15 @@ class NotificationStore:
             .order_by(Classification.analyzed_at, Classification.id)
             .limit(limit)
         )
+        if revision_id is not None:
+            statement = statement.where(ArticleRevision.id == revision_id)
+        if window is not None:
+            statement = statement.where(
+                ArticleRevision.published_at > window.start,
+                ArticleRevision.published_at <= window.end,
+            )
+        if exclude_revisions:
+            statement = statement.where(ArticleRevision.id.not_in(exclude_revisions))
         if retry_unknown is not None:
             statement = statement.where(
                 Article.id == retry_unknown, Notification.status == Status.UNKNOWN

@@ -1,9 +1,11 @@
 """Run an interchangeable classifier on eligible saved article revisions."""
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from app.intelligence.contracts import ClassificationError, Classifier, Relevance
+from app.publication_window import PublicationWindow
 from app.storage.analysis import AnalysisStore
 
 logger = logging.getLogger(__name__)
@@ -28,11 +30,21 @@ class AnalysisPipeline:
         self.classifier = classifier
 
     def analyze(
-        self, source_slugs: list[str], *, limit: int | None = None, retry_failed: bool = False
+        self,
+        source_slugs: list[str],
+        *,
+        limit: int | None = None,
+        retry_failed: bool = False,
+        after_saved: Callable[[int], None] | None = None,
+        window: PublicationWindow | None = None,
     ) -> AnalysisReport:
         identity = self.classifier.identity
         candidates = self.store.candidate_ids(
-            identity.profile_key, source_slugs, retry_failed=retry_failed, limit=limit
+            identity.profile_key,
+            source_slugs,
+            retry_failed=retry_failed,
+            limit=limit,
+            window=window,
         )
         report = AnalysisReport(
             identity.provider, identity.model, identity.prompt_version, selected=len(candidates)
@@ -60,6 +72,8 @@ class AnalysisPipeline:
             if self.store.complete(claim, identity, result):
                 report.saved += 1
                 report.relevance[result.assessment.relevance] += 1
+                if after_saved is not None:
+                    after_saved(revision_id)
             else:
                 report.skipped += 1
         return report

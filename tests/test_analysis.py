@@ -1,7 +1,10 @@
 import json
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from email.utils import format_datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -23,6 +26,7 @@ from app.intelligence.contracts import (
     Relevance,
 )
 from app.pipelines.analysis import AnalysisPipeline
+from app.scheduler import publication_window
 from app.storage.analysis import AnalysisStore
 from app.storage.database import create_database_engine
 from app.storage.models import (
@@ -446,7 +450,7 @@ def test_evaluation_compares_models_on_shared_revisions_and_preserves_label_hist
         ) == ["uncertain", "indirect", "direct"]
 
 
-def test_cli_completes_full_workflow_without_duplicate_alerts(
+def test_cli_sends_alert_before_analyzing_the_next_article_without_duplicates(
     database: Engine,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -481,13 +485,21 @@ allow_classification = true
                     f"<title>{FORDOW['title']}</title>"
                     "<link>https://world.example.test/fordow</link>"
                     "<description>Inspectors described a new finding.</description>"
+                    "</item><item>"
+                    f"<title>{CASES[2]['title']}</title>"
+                    "<link>https://world.example.test/football</link>"
+                    f"<description>{CASES[2]['summary']}</description>"
                     "</item></channel></rss>"
                 ),
             )
         if request.url.host == "llm.example.test":
-            return completion(json.dumps(assessment()))
+            document = json.loads(json.loads(request.content)["messages"][1]["content"])
+            sample = FORDOW if document["title"] == FORDOW["title"] else CASES[2]
+            return completion(json.dumps(assessment(sample)))
         assert request.url.host == "api.telegram.org"
         assert "https://world.example.test/fordow" in json.loads(request.content)["text"]
+        with Session(database) as session:
+            assert session.scalars(select(Classification.relevance)).all() == ["indirect"]
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 41}})
 
     client_factory = httpx.Client
@@ -496,17 +508,19 @@ allow_classification = true
     )
     assert main(["run"]) == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["collect"][0]["new_articles"] == 1
+    assert report["collect"][0]["new_articles"] == 2
     assert report["analyze"]["relevance"]["indirect"] == 1
+    assert report["analyze"]["relevance"]["unrelated"] == 1
     assert report["notify"]["sent"] == 1
     assert main(["run"]) == 0
     repeated = json.loads(capsys.readouterr().out)
-    assert repeated["collect"][0]["unchanged"] == 1
+    assert repeated["collect"][0]["unchanged"] == 2
     assert repeated["analyze"]["selected"] == repeated["notify"]["selected"] == 0
     assert requests == [
         "world.example.test",
         "llm.example.test",
         "api.telegram.org",
+        "llm.example.test",
         "world.example.test",
     ]
 
@@ -522,7 +536,8 @@ allow_classification = true
         assert settings.timezone == "Asia/Tehran"
         assert main(["runs"]) == 0
         assert json.loads(capsys.readouterr().out)["scheduler_running"]
-        assert job() == 0
+        slot = datetime(2026, 11, 25, 17, tzinfo=ZoneInfo(settings.timezone))
+        assert job(publication_window(settings, slot)) == 0
 
     monkeypatch.setattr("app.cli.serve", run_one_tick)
     assert main(["schedule", "--limit", "1"]) == 0
@@ -538,6 +553,103 @@ allow_classification = true
     assert [(row["title"], row["model_label"]) for row in related] == [
         (FORDOW["title"], "indirect")
     ]
+
+
+def test_scheduled_pipeline_filters_analysis_and_alerts_by_publication_window(
+    database: Engine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / "config.toml").write_text(
+        """[schedule]
+timezone = "Asia/Tehran"
+times = ["17:00", "17:33", "18:00"]
+[classification]
+provider = "fixture"
+base_url = "https://llm.example.test/v1"
+model = "fixture-model"
+[[sources]]
+slug = "world"
+name = "World"
+rss_url = "https://world.example.test/rss"
+allow_classification = true
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:fixture-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-1001234")
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    zone = ZoneInfo("Asia/Tehran")
+    at_1700 = datetime(2026, 11, 25, 17, tzinfo=zone)
+    at_1733 = at_1700.replace(minute=33)
+    at_1800 = at_1700.replace(hour=18)
+    prior_revision = save_fixture(database, slug="world")
+    with Session(database) as session, session.begin():
+        session.get_one(ArticleRevision, prior_revision).published_at = at_1700
+        session.add(
+            Classification(
+                article_revision_id=prior_revision,
+                provider="fixture",
+                model="previous-model",
+                prompt_version="previous",
+                **assessment(),
+            )
+        )
+
+    entries = (
+        ("at-start", at_1700),
+        ("between", at_1700.replace(minute=10)),
+        ("first-end", at_1733),
+        ("next", at_1733.replace(minute=45)),
+        ("after", at_1800.replace(minute=1)),
+        ("undated", None),
+    )
+    feed = (
+        '<rss version="2.0"><channel><title>World</title>'
+        + "".join(
+            f"<item><title>Fordow {ident}</title><link>https://world.example.test/{ident}</link>"
+            + (f"<pubDate>{format_datetime(published)}</pubDate>" if published else "")
+            + "</item>"
+            for ident, published in entries
+        )
+        + "</channel></rss>"
+    )
+    analyzed_titles = []
+    alerted_links = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "world.example.test":
+            return httpx.Response(200, text=feed)
+        if request.url.host == "llm.example.test":
+            item = json.loads(json.loads(request.content)["messages"][1]["content"])
+            analyzed_titles.append(item["title"])
+            return completion(json.dumps(assessment()))
+        assert request.url.host == "api.telegram.org"
+        alerted_links.append(json.loads(request.content)["text"].splitlines()[-1])
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": len(alerted_links)}})
+
+    client = httpx.Client
+    monkeypatch.setattr(
+        "app.cli.httpx.Client", lambda: client(transport=httpx.MockTransport(respond))
+    )
+    reports = []
+
+    def run_slots(settings, job):
+        for slot in (at_1733, at_1800):
+            assert job(publication_window(settings, slot)) == 0
+            reports.append(json.loads(capsys.readouterr().out))
+
+    monkeypatch.setattr("app.cli.serve", run_slots)
+    assert main(["schedule"]) == 0
+    assert analyzed_titles == ["Fordow between", "Fordow first-end", "Fordow next"]
+    assert [link.rsplit("/", 1)[-1] for link in alerted_links] == ["between", "first-end", "next"]
+    assert [report["notify"]["sent"] for report in reports] == [2, 1]
+    assert reports[0]["window"] == {"start": at_1700.isoformat(), "end": at_1733.isoformat()}
+    assert reports[1]["window"] == {"start": at_1733.isoformat(), "end": at_1800.isoformat()}
+    assert main(["runs", "--limit", "2"]) == 0
+    runs = json.loads(capsys.readouterr().out)["runs"]
+    assert [row["report"]["window"] for row in reversed(runs)] == [r["window"] for r in reports]
 
 
 def test_runs_reports_worker_locks_separately_and_records_skips(

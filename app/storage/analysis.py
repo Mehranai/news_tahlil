@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
 from app.intelligence.contracts import ArticleInput, ClassificationResult, ClassifierIdentity
+from app.publication_window import PublicationWindow
 from app.storage.models import (
     AnalysisJob,
     AnalysisJobStatus,
@@ -37,7 +38,13 @@ class AnalysisStore:
         self.lease_seconds = lease_seconds
 
     def candidate_ids(
-        self, profile_key: str, source_slugs: list[str], *, retry_failed: bool, limit: int | None
+        self,
+        profile_key: str,
+        source_slugs: list[str],
+        *,
+        retry_failed: bool,
+        limit: int | None,
+        window: PublicationWindow | None = None,
     ) -> list[int]:
         statement = (
             select(ArticleRevision.id)
@@ -58,6 +65,11 @@ class AnalysisStore:
             .order_by(ArticleRevision.id)
             .limit(limit)
         )
+        if window is not None:
+            statement = statement.where(
+                ArticleRevision.published_at > window.start,
+                ArticleRevision.published_at <= window.end,
+            )
         with self.sessions() as session:
             return list(session.scalars(statement))
 
